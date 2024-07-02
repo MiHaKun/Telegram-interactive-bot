@@ -52,7 +52,7 @@ python -m interactive-bot
 - [ ] 完善下数据库。
 - [ ] 添加客户的人机识别，防止无聊的人用userbot来刷
 - [ ] 添加并识别媒体组消息。
-- [ ] 精简点代码，利用**payload来展开forwarding的参数。
+- [x] 精简点代码，利用**payload来展开forwarding的参数。
 
 # 关于
 
