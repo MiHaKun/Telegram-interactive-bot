@@ -109,7 +109,8 @@ async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_T
     user_id = context.bot_data.get(f"user_id|{message_thread_id}", 0)
     user_id = int(user_id)
     if not user_id:
-        await update.message.reply_html("未找到对应用户。")
+        logger.debug(update.message)
+        return 
     chat_id = user_id
     attachment = update.message.effective_attachment 
     # 构筑下发送参数
