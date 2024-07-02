@@ -1,13 +1,9 @@
 # Telegram interactive bot (Telegram 双向机器人)
 
-<div align="center">
-[示例机器人](https://t.me/CustomerConnectBot) |
-[示例后台](https://t.me/MiHaCMSGroup)
-</div>
-
-
 ## 一、简介
 Telegram的开源双向机器人。避免垃圾信息；让被限制的客户可以顺利联系到你。
+[示例机器人](https://t.me/CustomerConnectBot) | [示例后台](https://t.me/MiHaCMSGroup)
+
 
 ### 特色
 - 当客户通过机器人联系客服时，所有消息将被完整转发到后台管理群组，生成一个独立的以客户信息命名子论坛，用来和其他客户区分开来。
