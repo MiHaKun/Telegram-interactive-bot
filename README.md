@@ -48,7 +48,7 @@ python -m interactive-bot
 
 
 # ToDoList
-- [ ] 支持消息回复功能。消息间可以相互引用。
+- [x] 支持消息回复功能。消息间可以相互引用。
 - [ ] 完善下数据库。
 - [ ] 添加客户的人机识别，防止无聊的人用userbot来刷
 - [ ] 添加并识别媒体组消息。
@@ -61,5 +61,4 @@ python -m interactive-bot
 - 讨论群组是 : https://t.me/DeveloperTeamGroup 欢迎加入后玩耍
 - 随意Fork，记得保留`关于`的内容。
 - 初版写了2小时。喜欢请打赏。不会部署，群里找我。
-
 
