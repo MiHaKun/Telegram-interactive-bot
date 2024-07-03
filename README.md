@@ -5,7 +5,7 @@ Telegram的开源双向机器人。避免垃圾信息；让被限制的客户可
 
 
 
-[示例机器人](https://t.me/CustomerConnectBot) | [示例后台](https://t.me/MiHaCMSGroup)
+[English](https://github.com/MiHaKun/Telegram-interactive-bot/blob/master/README.en.md) | [示例机器人](https://t.me/CustomerConnectBot) | [示例后台](https://t.me/MiHaCMSGroup)
 
 
 ### 特色
