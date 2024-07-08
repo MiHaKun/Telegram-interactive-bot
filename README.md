@@ -7,7 +7,10 @@ Telegram的开源双向机器人。避免垃圾信息；让被限制的客户可
 [English](https://github.com/MiHaKun/Telegram-interactive-bot/blob/master/README.en.md) | [示例机器人](https://t.me/CustomerConnectBot) | [示例后台](https://t.me/MiHaCMSGroup)
 
 （ps：和示例机器人说话后，去后台看看，就大概知道原理了）
+
 （ps：示例后台是公开群组，方便大家看效果而已。自己部署，最好用私有群组，安全性还是没问题的）
+
+![image-20240708130408336](./image-20240708130408336.png)
 
 ### 特色
 - 当客户通过机器人联系客服时，所有消息将被完整转发到后台管理群组，生成一个独立的以客户信息命名子论坛，用来和其他客户区分开来。
