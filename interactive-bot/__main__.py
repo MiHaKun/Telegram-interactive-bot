@@ -3,13 +3,30 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PicklePersistence, ConversationHandler
 from telegram.helpers import create_deep_linked_url,mention_html
 import telegram 
+from .utils import send_contact_card
 
 STATE_WAIT_MEDIA_START = 0
 STATE_WAIT_MEDIA_GROUP = 1
 
+from db.database import SessionMaker, engine
+from db.model import MediaGroupMesssage, MessageMap, User,FormnStatus, Base
+
+# 创建表（使用的sqlite，是无法轻易alter表的。如果改动，需要删除重建。无法merge）
+Base.metadata.create_all(bind=engine)
+
+db = SessionMaker()
+
+def update_user_db(user: telegram.User):
+    if db.query(User).filter(User.user_id == user.id).first(): return 
+    u = User(user_id=user.id, first_name=user.first_name, last_name=user.last_name, username=user.username)
+    db.merge(u)
+    db.commit()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    u = User(user_id=user.id, first_name=user.first_name, last_name=user.last_name, username=user.username)
+    db.merge(u)
+    db.commit()
     # check whether is admin
     if user.id == admin_user_id:
         logger.info(f"{user.first_name}({user.id}) is admin")
@@ -22,7 +39,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_html(f"⚠️⚠️后台管理群组设置错误，请检查配置。⚠️⚠️\n你需要确保已经将机器人 @{context.bot.username} 邀请入管理群组并且给与了管理员权限。\n错误细节：{e}\n请联系 @MrMiHa 获取技术支持。")
             return ConversationHandler.END
         await update.message.reply_html(f"你好管理员 {user.first_name}({user.id})\n\n欢迎使用 {app_name} 机器人。\n\n 目前你的配置完全正确。可以在群组 <b> {bg.title} </b> 中使用机器人。")
-
     else:
         await update.message.reply_html(f"{mention_html(user.id, user.full_name)} 同学：\n\n{welcome_message}")
 
@@ -30,143 +46,111 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    update_user_db(user)
     chat_id = admin_group_id
     attachment = update.message.effective_attachment 
     # await update.message.forward(chat_id)
-    message_thread_id = context.bot_data.get(f'mthread_id|{user.id}', 0)
+    u = db.query(User).filter(User.user_id == user.id).first()
+    message_thread_id = u.message_thread_id
+    if f := db.query(FormnStatus).filter(FormnStatus.message_thread_id == message_thread_id).first():
+        if f.status == 'closed':
+            await update.message.reply_html("客服已经关闭对话。如需联系，请利用其他途径联络客服回复和你的对话。")
+            return
     if not message_thread_id:
         formn = await context.bot.create_forum_topic(chat_id, name=f"{user.full_name}|{user.id}")
         message_thread_id = formn.message_thread_id
-        context.bot_data[f'mthread_id|{user.id}'] = message_thread_id
-        context.bot_data[f'user_id|{message_thread_id}'] = user.id
+        u.message_thread_id = message_thread_id
         await context.bot.send_message(chat_id, f"新的用户 {mention_html(user.id, user.full_name)} 开始了一个新的会话。", message_thread_id=message_thread_id, parse_mode='HTML')
-    
+        await send_contact_card(chat_id, message_thread_id, user, update, context)
+        db.add(u)
+        db.commit()
+  
     # 构筑下发送参数
     params = {
         "message_thread_id": message_thread_id
     }
     if update.message.reply_to_message:
+        # 用户引用了一条消息。我们需要找到这条消息在群组中的id
         reply_in_user_chat = update.message.reply_to_message.message_id
-        if msg_id_in_user_chat := context.bot_data.get(f'u2a|{user.id}|{reply_in_user_chat}', 0):
-            params['reply_to_message_id'] =  msg_id_in_user_chat
+        if msg_map := db.query(MessageMap).filter(MessageMap.user_chat_message_id == reply_in_user_chat).first():
+            params['reply_to_message_id'] =  msg_map.group_chat_message_id
     try:
         bad_type = ''
-        if not attachment:
-            sent_msg = await context.bot.send_message(chat_id, update.message.text_html, parse_mode='HTML', **params)
-        elif update.message.media_group_id:
+        if update.message.media_group_id:
             bad_type = "不支持媒体组类型(最好单个发送)。\n如果确定需要，请点击-> /start_to_send_media_group "
+        else:
+            chat = await context.bot.get_chat(chat_id)
+            sent_msg = await chat.send_copy(update.effective_chat.id, update.message.id, **params)
 
-        elif isinstance(attachment, telegram.Audio):
-            sent_msg = await context.bot.send_audio(chat_id, attachment, caption=update.message.caption_html, parse_mode='HTML', **params)
-        elif isinstance(attachment, telegram.Dice):
-            sent_msg = await context.bot.send_dice(chat_id, attachment, **params)
-        elif isinstance(attachment, telegram.Contact):
-            sent_msg = await context.bot.send_contact(chat_id, contact=attachment, **params)
-        elif isinstance(attachment, telegram.Document):
-            sent_msg = await context.bot.send_document(chat_id, attachment, caption=update.message.caption_html, parse_mode='HTML', **params)
-        elif isinstance(attachment, telegram.Animation):
-            sent_msg = await context.bot.send_animation(chat_id, animation=attachment, **params)
-        elif isinstance(attachment, telegram.Game):
-            bad_type = '不支持游戏类型'
-        elif isinstance(attachment, telegram.Invoice):
-            bad_type = '不支持发票类型'
-        elif isinstance(attachment, telegram.Location):
-            sent_msg = await context.bot.send_location(chat_id, location=attachment, **params)
-        elif isinstance(attachment, telegram.PassportData):
-            bad_type = '不支持通行证类型'
-        elif isinstance(attachment, tuple) and isinstance(attachment[0], telegram.PhotoSize):
-            sent_msg = await context.bot.send_photo(chat_id, attachment[0].file_id, caption=update.message.caption_html, parse_mode='HTML', **params)
-        elif isinstance(attachment, telegram.Poll):
-            bad_type = '不支持投票类型'
-        elif isinstance(attachment, telegram.Sticker):
-            sent_msg = await context.bot.send_sticker(chat_id, attachment, **params)
-        elif isinstance(attachment, telegram.Story):
-            bad_type= '不支持故事类型'
-        elif isinstance(attachment, telegram.SuccessfulPayment, **params):
-            bad_type = '不支持支付类型'
-        elif isinstance(attachment, telegram.Venue):
-            sent_msg = await context.bot.send_venue(chat_id, venue=attachment,**params)
-        elif isinstance(attachment, telegram.Video):
-            sent_msg = await context.bot.send_video(chat_id, attachment,**params)
-        elif isinstance(attachment, telegram.VideoNote):
-            sent_msg = await context.bot.send_video_note(chat_id, attachment,**params)
-        elif isinstance(attachment, telegram.Voice):
-            sent_msg = await context.bot.send_voice(chat_id, attachment,**params)
         if bad_type:
             await update.message.reply_html(f"{bad_type}。请更换重新发送。（支持常用的文字、图片、音频、视频、文件等类型）")
         else:
-            context.bot_data[f'a2u|{user.id}|{sent_msg.id}'] = update.message.id
-            context.bot_data[f'u2a|{user.id}|{update.message.id}'] = sent_msg.message_id
+            msg_map = MessageMap(user_chat_message_id=update.message.id, group_chat_message_id=sent_msg.message_id)
+            db.add(msg_map)
+            db.commit()
 
 
     except Exception as e:
-        await update.message.reply_html(f"发送失败: {e}")
+        await update.message.reply_html(f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢")
 
 async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    update_user_db(update.effective_user)
     message_thread_id = update.message.message_thread_id
-    user_id = context.bot_data.get(f"user_id|{message_thread_id}", 0)
-    user_id = int(user_id)
-    if not user_id:
-        logger.debug(update.message)
+    if not message_thread_id:
+        # general message, ignore
         return 
+    if u := db.query(User).filter(User.message_thread_id == message_thread_id).first():
+        user_id = u.user_id
+        if not user_id:
+            logger.debug(update.message)
+            return     
+    if update.message.forum_topic_created:
+        f = FormnStatus(message_thread_id=update.message.message_thread_id, status='opened')
+        db.add(f)
+        db.commit()
+        return 
+    if update.message.forum_topic_closed:
+        await context.bot.send_message(user_id, "对话已经结束。对方已经关闭了对话。你的留言将被忽略。")
+        if f := db.query(FormnStatus).filter(FormnStatus.message_thread_id == update.message.message_thread_id).first():
+            f.status = 'closed'
+            db.add(f)
+            db.commit()
+        return 
+    if update.message.forum_topic_reopened:
+        await context.bot.send_message(user_id, "对方重新打开了对话。可以继续对话了。")
+        if f := db.query(FormnStatus).filter(FormnStatus.message_thread_id == update.message.message_thread_id).first():
+            f.status = 'opened'
+            db.add(f)
+            db.commit()        
+        return
+    if f := db.query(FormnStatus).filter(FormnStatus.message_thread_id == message_thread_id).first():
+        if f.status == 'closed':
+            await update.message.reply_html("对话已经结束。希望和对方联系，需要打开对话。")
+            return
     chat_id = user_id
-    attachment = update.message.effective_attachment 
     # 构筑下发送参数
     params = {}
     if update.message.reply_to_message:
+        # 群组中，客服回复了一条消息。我们需要找到这条消息在用户中的id
         reply_in_admin = update.message.reply_to_message.message_id
-        if msg_id_in_admin := context.bot_data.get(f'a2u|{user_id}|{reply_in_admin}', 0):
-            params['reply_to_message_id'] =  msg_id_in_admin
+        if msg_map := db.query(MessageMap).filter(MessageMap.group_chat_message_id == reply_in_admin).first():
+            params['reply_to_message_id'] =  msg_map.user_chat_message_id
     try:
         bad_type = ''
-        if not attachment:
-            sent_msg = await context.bot.send_message(chat_id, update.message.text_html, parse_mode='HTML', **params)
-        elif update.message.media_group_id:
+        if update.message.media_group_id:
             bad_type = "不支持媒体组类型(最好单个发送)。\n如果确定需要，请点击-> /start_to_send_media_group "
-        elif isinstance(attachment, telegram.Audio):
-            sent_msg = await context.bot.send_audio(chat_id, attachment, caption=update.message.caption_html, parse_mode='HTML', **params)
-        elif isinstance(attachment, telegram.Dice):
-            sent_msg = await context.bot.send_dice(chat_id, attachment, **params)
-        elif isinstance(attachment, telegram.Contact):
-            sent_msg = await context.bot.send_contact(chat_id, contact=attachment, **params)
-        elif isinstance(attachment, telegram.Document):
-            sent_msg = await context.bot.send_document(chat_id, attachment, caption=update.message.caption_html, parse_mode='HTML', **params)
-        elif isinstance(attachment, telegram.Animation):
-            sent_msg = await context.bot.send_animation(chat_id, animation=attachment, **params)
-        elif isinstance(attachment, telegram.Game):
-            bad_type = '不支持游戏类型'
-        elif isinstance(attachment, telegram.Invoice):
-            bad_type = '不支持发票类型'
-        elif isinstance(attachment, telegram.Location):
-            sent_msg = await context.bot.send_location(chat_id, location=attachment, **params)
-        elif isinstance(attachment, telegram.PassportData):
-            bad_type = '不支持通行证类型'
-        elif isinstance(attachment, tuple) and isinstance(attachment[0], telegram.PhotoSize):
-            sent_msg = await context.bot.send_photo(chat_id, attachment[0].file_id, caption=update.message.caption_html, parse_mode='HTML', **params)
-        elif isinstance(attachment, telegram.Poll):
-            bad_type = '不支持投票类型'
-        elif isinstance(attachment, telegram.Sticker):
-            sent_msg = await context.bot.send_sticker(chat_id, attachment, **params)
-        elif isinstance(attachment, telegram.Story):
-            bad_type= '不支持故事类型'
-        elif isinstance(attachment, telegram.SuccessfulPayment):
-            bad_type = '不支持支付类型'
-        elif isinstance(attachment, telegram.Venue):
-            sent_msg = await context.bot.send_venue(chat_id, venue=attachment, **params)
-        elif isinstance(attachment, telegram.Video):
-            sent_msg = await context.bot.send_video(chat_id, attachment, **params)
-        elif isinstance(attachment, telegram.VideoNote):
-            sent_msg = await context.bot.send_video_note(chat_id, attachment, **params)
-        elif isinstance(attachment, telegram.Voice):
-            sent_msg = await context.bot.send_voice(chat_id, attachment, **params)
+        else:
+            chat = await context.bot.get_chat(chat_id)
+            sent_msg = await chat.send_copy(update.effective_chat.id, update.message.id, **params)    
         if bad_type:
             await update.message.reply_html(f"{bad_type}。请更换重新发送。（支持常用的文字、图片、音频、视频、文件等类型）")
         else:
-            context.bot_data[f'u2a|{user_id}|{sent_msg.id}'] = update.message.id
-            context.bot_data[f'a2u|{user_id}|{update.message.id}'] = sent_msg.message_id
+            msg_map = MessageMap(group_chat_message_id=update.message.id, user_chat_message_id=sent_msg.message_id)
+            db.add(msg_map)
+            db.commit()
 
     except Exception as e:
-        await update.message.reply_html(f"发送失败: {e}")
+        await update.message.reply_html(f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢")
 
 async def start_to_send_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html("请开始发送,确认上传完毕后，请点击 /done")
