@@ -31,3 +31,6 @@ try:
     admin_user_id = int(os.getenv('ADMIN_USER_ID')) or exit('ADMIN_USER 未填写')
 except ValueError:
     exit('ADMIN_GROUP_ID or ADMIN_USER_ID 应该是数字')
+
+
+is_delete_topic_as_ban_forever = os.getenv('DELETE_TOPIC_AS_FOREVER_BAN') == "1" 

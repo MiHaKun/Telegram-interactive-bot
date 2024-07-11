@@ -1,20 +1,21 @@
-from . import logger, api_id, api_hash, bot_token, app_name, welcome_message, admin_group_id, admin_user_id
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaAudio, InputMediaDocument, InputMediaPhoto ,InputMediaVideo
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters, PicklePersistence, ConversationHandler
-from telegram.helpers import create_deep_linked_url,mention_html
-import telegram 
-from .utils import send_contact_card
-
-STATE_WAIT_MEDIA_START = 0
-STATE_WAIT_MEDIA_GROUP = 1
+import telegram
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (ApplicationBuilder, CommandHandler, ContextTypes,
+                          ConversationHandler, MessageHandler,
+                          PicklePersistence, filters)
+from telegram.helpers import mention_html
 
 from db.database import SessionMaker, engine
-from db.model import MediaGroupMesssage, MessageMap, User,FormnStatus, Base
+from db.model import Base, FormnStatus, MediaGroupMesssage, MessageMap, User
+
+from . import (admin_group_id, admin_user_id, app_name,
+               bot_token, logger, welcome_message, is_delete_topic_as_ban_forever)
+from telegram.error import BadRequest
 
 # 创建表（使用的sqlite，是无法轻易alter表的。如果改动，需要删除重建。无法merge）
 Base.metadata.create_all(bind=engine)
-
 db = SessionMaker()
+
 
 # 延时发送媒体组消息的回调
 async def _send_media_group_later(context: ContextTypes.DEFAULT_TYPE):
@@ -40,7 +41,6 @@ async def _send_media_group_later(context: ContextTypes.DEFAULT_TYPE):
         db.add(msg_map)
         db.commit()
 
-
 # 延时发送媒体组消息
 async def send_media_group_later(delay: float, chat_id, target_id, media_group_id: int, dir, context: ContextTypes.DEFAULT_TYPE):
     name=f"sendmediagroup_{chat_id}_{target_id}_{dir}"
@@ -48,18 +48,50 @@ async def send_media_group_later(delay: float, chat_id, target_id, media_group_i
     return name
 
 
+# async def monitor_delete_topic_event(context: ContextTypes.DEFAULT_TYPE):
+#     logger.info(f"监控删除对话事件")
+#     all_forum = db.query(FormnStatus).all()
+#     for f in all_forum:
+#         message_thread_id = f.message_thread_id
+#         if user := db.query(User).filter(User.message_thread_id == message_thread_id).first():
+#             try:
+#                 await context.bot.edit_forum_topic(admin_group_id, message_thread_id, f"{user.first_name} {user.last_name}|{user.id}")
+#             except BadRequest as e:
+#                 if e.message == "Topic_not_modified": continue
+#                 # if str(e) == "Topic_not_modified": continue
+#                 print(e)
+#                 pass
+#     pass
 
 def update_user_db(user: telegram.User):
     if db.query(User).filter(User.user_id == user.id).first(): return 
     u = User(user_id=user.id, first_name=user.first_name, last_name=user.last_name, username=user.username)
-    db.merge(u)
+    db.add(u)
     db.commit()
 
+async def send_contact_card(chat_id, message_thread_id, user: User, update: Update, context: ContextTypes):
+    buttons = []
+    buttons.append([InlineKeyboardButton(f"{'🏆 高级会员' if user.is_premium else '✈️ 普通会员' }", url=f"https://github.com/MiHaKun/Telegram-interactive-bot")])
+    if user.username:
+        buttons.append([InlineKeyboardButton("👤 直接联络", url=f"https://t.me/{user.username}")])
+
+    user_photo = await context.bot.get_user_profile_photos(user.id)
+
+    if user_photo.total_count:
+        pic = user_photo.photos[0][-1].file_id
+        await context.bot.send_photo(chat_id,photo=pic, 
+                                    caption=f"👤 {mention_html(user.id, user.first_name)}\n\n📱 {user.id}\n\n🔗 @{user.username if user.username else '无'}",
+                                    message_thread_id=message_thread_id, reply_markup=InlineKeyboardMarkup(buttons),
+                                    parse_mode='HTML')
+    else:
+        await context.bot.send_contact(chat_id, phone_number='11111', first_name=user.first_name, last_name=user.last_name, 
+                                     message_thread_id=message_thread_id, 
+                                     reply_markup=InlineKeyboardMarkup(buttons)
+                                     )
+        
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    u = User(user_id=user.id, first_name=user.first_name, last_name=user.last_name, username=user.username)
-    db.merge(u)
-    db.commit()
+    update_user_db(user)
     # check whether is admin
     if user.id == admin_user_id:
         logger.info(f"{user.first_name}({user.id}) is admin")
@@ -124,7 +156,14 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
         db.add(msg_map)
         db.commit()
 
-
+    except BadRequest as e:
+        if is_delete_topic_as_ban_forever:
+            await update.message.reply_html(f"发送失败，你的对话已经被客服删除。请联系客服重新打开对话。")
+        else:
+            u.message_thread_id = 0
+            db.add(u)
+            db.commit()
+            await update.message.reply_html(f"发送失败，你的对话已经被客服删除。请再发送一条消息用来激活对话。")
     except Exception as e:
         await update.message.reply_html(f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢")
 
@@ -191,50 +230,6 @@ async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await update.message.reply_html(f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢")
 
-async def start_to_send_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_html("请开始发送,确认上传完毕后，请点击 /done")
-    return STATE_WAIT_MEDIA_START
-
-async def wait_media_start_idx(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.media_group_id:
-        context.user_data['current_media_group'] = []
-        await update.message.reply_html("请发送一个媒体组，例如：一组图片、视频、音频等。/n点击 /start_to_send_media_group 重新开始。")
-        return ConversationHandler.END
-    attachment = update.message.effective_attachment
-    context.user_data['current_media_group'] = [(attachment, update.message.caption_html)]
-    return STATE_WAIT_MEDIA_GROUP
-
-async def wait_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    attachment = update.message.effective_attachment 
-    logger.info(f"media-group_after {update.message.caption}")
-    attachs = context.user_data['current_media_group']
-    attachs.append((attachment, update.message.caption_html))
-    context.user_data['current_media_group'] = attachs
-    await update.message.reply_html("请观察媒体消息是否还在上传。如果完成，请点击 /done")
-    return STATE_WAIT_MEDIA_GROUP
-
-async def done_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat = update.effective_chat
-    params = {}
-    if chat.id == admin_group_id:
-        message_thread_id = update.message.message_thread_id
-        chat_id = context.bot_data.get(f"user_id|{message_thread_id}", 0)
-    else:
-        chat_id = admin_group_id
-        params['message_thread_id'] = context.bot_data.get(f'mthread_id|{user.id}', 0)
-
-    attachs = context.user_data['current_media_group']
-    media_group = []
-    for attach, caption in attachs:
-        if isinstance(attach, telegram.Video):
-            media_group.append(InputMediaVideo(attach.file_id, caption=caption))
-        elif isinstance(attach, tuple ) and isinstance(attach[0], telegram.PhotoSize):
-            media_group.append(InputMediaPhoto(attach[0].file_id, caption=caption))
-            
-    await context.bot.send_media_group(chat_id,media_group, **params)
-    await update.message.reply_html(f"发送成功。")
-    return ConversationHandler.END
 
 async def error_in_send_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html("错误的消息类型。退出发送媒体组。后续对话将直接转发。")
@@ -251,26 +246,11 @@ if __name__ == '__main__':
     application = ApplicationBuilder().token(bot_token).persistence(persistence=pickle_persistence).build()
 
     application.add_handler(CommandHandler('start', start, filters.ChatType.PRIVATE))
-    application.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('start_to_send_media_group', start_to_send_media_group, filters.COMMAND)],
-        states={
-            STATE_WAIT_MEDIA_START: [
-                MessageHandler(~filters.COMMAND , wait_media_start_idx),
-                CommandHandler("done", done_media_group, filters.COMMAND)
-                ],
-            STATE_WAIT_MEDIA_GROUP: [
-                MessageHandler(~filters.COMMAND , wait_media_group),
-                CommandHandler("done", done_media_group, filters.COMMAND)
-            ]
-        },
-        fallbacks=[
-            MessageHandler(filters.ALL, error_in_send_media_group),
-            CommandHandler("done", done_media_group, filters.COMMAND)
-        ]
-    ))    
+  
     application.add_handler(MessageHandler(~filters.COMMAND & filters.ChatType.PRIVATE, forwarding_message_u2a))
     application.add_handler(MessageHandler(~filters.COMMAND & filters.Chat([admin_group_id]), forwarding_message_a2u))
 
+    # application.job_queue.run_repeating(monitor_delete_topic_event, interval=5, first=0)
 
     application.add_error_handler(error_handler)
     application.run_polling()  
