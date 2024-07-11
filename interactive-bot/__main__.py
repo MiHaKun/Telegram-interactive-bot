@@ -16,6 +16,39 @@ Base.metadata.create_all(bind=engine)
 
 db = SessionMaker()
 
+# 延时发送媒体组消息的回调
+async def _send_media_group_later(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    media_group_id = job.data
+    _, from_chat_id, target_id, dir = job.name.split('_')
+
+    # 数据库内查找对应的媒体组消息。
+    media_group_msgs = db.query(MediaGroupMesssage).filter(MediaGroupMesssage.media_group_id == media_group_id, MediaGroupMesssage.chat_id == from_chat_id).all()  
+    chat = await context.bot.get_chat(target_id)
+    if dir == 'u2a':
+        u = db.query(User).filter(User.user_id == from_chat_id).first()
+        message_thread_id = u.message_thread_id
+        sents = await chat.send_copies(from_chat_id, [m.message_id for m in media_group_msgs] , message_thread_id=message_thread_id)
+    else:
+        sents = await chat.send_copies(from_chat_id, [m.message_id for m in media_group_msgs])
+
+    for sent, msg in zip(sents, media_group_msgs):
+        if chat.first_name: # 用户
+            msg_map = MessageMap(user_chat_message_id=sent.message_id, group_chat_message_id=msg.message_id)
+        else: # 群组
+            msg_map = MessageMap(user_chat_message_id=msg.message_id, group_chat_message_id=sent.message_id)
+        db.add(msg_map)
+        db.commit()
+
+
+# 延时发送媒体组消息
+async def send_media_group_later(delay: float, chat_id, target_id, media_group_id: int, dir, context: ContextTypes.DEFAULT_TYPE):
+    name=f"sendmediagroup_{chat_id}_{target_id}_{dir}"
+    context.job_queue.run_once(_send_media_group_later, delay, chat_id=chat_id, name=name, data=media_group_id)
+    return name
+
+
+
 def update_user_db(user: telegram.User):
     if db.query(User).filter(User.user_id == user.id).first(): return 
     u = User(user_id=user.id, first_name=user.first_name, last_name=user.last_name, username=user.username)
@@ -75,19 +108,21 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
         if msg_map := db.query(MessageMap).filter(MessageMap.user_chat_message_id == reply_in_user_chat).first():
             params['reply_to_message_id'] =  msg_map.group_chat_message_id
     try:
-        bad_type = ''
         if update.message.media_group_id:
-            bad_type = "不支持媒体组类型(最好单个发送)。\n如果确定需要，请点击-> /start_to_send_media_group "
+            msg = MediaGroupMesssage(chat_id=update.message.chat.id, message_id=update.message.message_id, media_group_id=update.message.media_group_id, is_header=False, caption_html=update.message.caption_html)
+            db.add(msg)
+            db.commit()    
+            if update.message.media_group_id != context.user_data.get('current_media_group_id', 0):
+                context.user_data['current_media_group_id'] = update.message.media_group_id
+                await send_media_group_later(5, user.id, chat_id, update.message.media_group_id, "u2a", context)
+            return 
         else:
             chat = await context.bot.get_chat(chat_id)
             sent_msg = await chat.send_copy(update.effective_chat.id, update.message.id, **params)
 
-        if bad_type:
-            await update.message.reply_html(f"{bad_type}。请更换重新发送。（支持常用的文字、图片、音频、视频、文件等类型）")
-        else:
-            msg_map = MessageMap(user_chat_message_id=update.message.id, group_chat_message_id=sent_msg.message_id)
-            db.add(msg_map)
-            db.commit()
+        msg_map = MessageMap(user_chat_message_id=update.message.id, group_chat_message_id=sent_msg.message_id)
+        db.add(msg_map)
+        db.commit()
 
 
     except Exception as e:
@@ -99,11 +134,12 @@ async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_T
     if not message_thread_id:
         # general message, ignore
         return 
+    user_id = 0
     if u := db.query(User).filter(User.message_thread_id == message_thread_id).first():
         user_id = u.user_id
-        if not user_id:
-            logger.debug(update.message)
-            return     
+    if not user_id:
+        logger.debug(update.message)
+        return     
     if update.message.forum_topic_created:
         f = FormnStatus(message_thread_id=update.message.message_thread_id, status='opened')
         db.add(f)
@@ -136,18 +172,21 @@ async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_T
         if msg_map := db.query(MessageMap).filter(MessageMap.group_chat_message_id == reply_in_admin).first():
             params['reply_to_message_id'] =  msg_map.user_chat_message_id
     try:
-        bad_type = ''
         if update.message.media_group_id:
-            bad_type = "不支持媒体组类型(最好单个发送)。\n如果确定需要，请点击-> /start_to_send_media_group "
+            # bad_type = "不支持媒体组类型(最好单个发送)。\n如果确定需要，请点击-> /start_to_send_media_group "
+            msg = MediaGroupMesssage(chat_id=update.message.chat.id, message_id=update.message.message_id, media_group_id=update.message.media_group_id, is_header=False, caption_html=update.message.caption_html)
+            db.add(msg)
+            db.commit()    
+            if update.message.media_group_id != context.application.user_data[user_id].get('current_media_group_id', 0):
+                context.application.user_data[user_id]['current_media_group_id'] = update.message.media_group_id
+                await send_media_group_later(5, update.effective_chat.id, user_id, update.message.media_group_id, "a2u", context)
+            return 
         else:
             chat = await context.bot.get_chat(chat_id)
             sent_msg = await chat.send_copy(update.effective_chat.id, update.message.id, **params)    
-        if bad_type:
-            await update.message.reply_html(f"{bad_type}。请更换重新发送。（支持常用的文字、图片、音频、视频、文件等类型）")
-        else:
-            msg_map = MessageMap(group_chat_message_id=update.message.id, user_chat_message_id=sent_msg.message_id)
-            db.add(msg_map)
-            db.commit()
+        msg_map = MessageMap(group_chat_message_id=update.message.id, user_chat_message_id=sent_msg.message_id)
+        db.add(msg_map)
+        db.commit()
 
     except Exception as e:
         await update.message.reply_html(f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢")
