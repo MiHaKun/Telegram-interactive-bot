@@ -80,4 +80,7 @@ python -m interactive-bot
 - 讨论群组是 : https://t.me/DeveloperTeamGroup 欢迎加入后玩耍
 - 随意Fork，记得保留`关于`的内容。
 - 初版写了2小时。喜欢请打赏。不会部署，群里找我。
+- 服务器推荐RackNerd的。实际上，我也确实用这个。够便宜。
+[这款就够：2核3G--年27刀](https://my.racknerd.com/aff.php?aff=11705&pid=828) 
 
+- 实在搞不定部署，可以群里找大家帮忙部署下。服务器也可以找大家共用： https://t.me/DeveloperTeamGroup 
