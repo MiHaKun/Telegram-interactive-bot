@@ -9,7 +9,7 @@ from db.database import SessionMaker, engine
 from db.model import Base, FormnStatus, MediaGroupMesssage, MessageMap, User
 
 from . import (admin_group_id, admin_user_id, app_name,
-               bot_token, logger, welcome_message, is_delete_topic_as_ban_forever)
+               bot_token, logger, welcome_message, is_delete_topic_as_ban_forever, is_delete_user_messages)
 from telegram.error import BadRequest
 
 # 创建表（使用的sqlite，是无法轻易alter表的。如果改动，需要删除重建。无法merge）
@@ -27,41 +27,28 @@ async def _send_media_group_later(context: ContextTypes.DEFAULT_TYPE):
     media_group_msgs = db.query(MediaGroupMesssage).filter(MediaGroupMesssage.media_group_id == media_group_id, MediaGroupMesssage.chat_id == from_chat_id).all()  
     chat = await context.bot.get_chat(target_id)
     if dir == 'u2a':
+        # 发送给群组
         u = db.query(User).filter(User.user_id == from_chat_id).first()
         message_thread_id = u.message_thread_id
         sents = await chat.send_copies(from_chat_id, [m.message_id for m in media_group_msgs] , message_thread_id=message_thread_id)
+        for sent, msg in zip(sents, media_group_msgs):
+            msg_map = MessageMap(user_chat_message_id=msg.message_id, group_chat_message_id=sent.message_id, user_id=u.user_id)
+            db.add(msg_map)
+            db.commit()        
     else:
+        # 发送给用户
         sents = await chat.send_copies(from_chat_id, [m.message_id for m in media_group_msgs])
+        for sent, msg in zip(sents, media_group_msgs):
+            msg_map = MessageMap(user_chat_message_id=sent.message_id, group_chat_message_id=msg.message_id, user_id=target_id)
+            db.add(msg_map)
+            db.commit()
 
-    for sent, msg in zip(sents, media_group_msgs):
-        if chat.first_name: # 用户
-            msg_map = MessageMap(user_chat_message_id=sent.message_id, group_chat_message_id=msg.message_id)
-        else: # 群组
-            msg_map = MessageMap(user_chat_message_id=msg.message_id, group_chat_message_id=sent.message_id)
-        db.add(msg_map)
-        db.commit()
 
 # 延时发送媒体组消息
 async def send_media_group_later(delay: float, chat_id, target_id, media_group_id: int, dir, context: ContextTypes.DEFAULT_TYPE):
     name=f"sendmediagroup_{chat_id}_{target_id}_{dir}"
     context.job_queue.run_once(_send_media_group_later, delay, chat_id=chat_id, name=name, data=media_group_id)
     return name
-
-
-# async def monitor_delete_topic_event(context: ContextTypes.DEFAULT_TYPE):
-#     logger.info(f"监控删除对话事件")
-#     all_forum = db.query(FormnStatus).all()
-#     for f in all_forum:
-#         message_thread_id = f.message_thread_id
-#         if user := db.query(User).filter(User.message_thread_id == message_thread_id).first():
-#             try:
-#                 await context.bot.edit_forum_topic(admin_group_id, message_thread_id, f"{user.first_name} {user.last_name}|{user.id}")
-#             except BadRequest as e:
-#                 if e.message == "Topic_not_modified": continue
-#                 # if str(e) == "Topic_not_modified": continue
-#                 print(e)
-#                 pass
-#     pass
 
 def update_user_db(user: telegram.User):
     if db.query(User).filter(User.user_id == user.id).first(): return 
@@ -152,7 +139,7 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
             chat = await context.bot.get_chat(chat_id)
             sent_msg = await chat.send_copy(update.effective_chat.id, update.message.id, **params)
 
-        msg_map = MessageMap(user_chat_message_id=update.message.id, group_chat_message_id=sent_msg.message_id)
+        msg_map = MessageMap(user_chat_message_id=update.message.id, group_chat_message_id=sent_msg.message_id, user_id=user.id)
         db.add(msg_map)
         db.commit()
 
@@ -223,13 +210,23 @@ async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_T
         else:
             chat = await context.bot.get_chat(chat_id)
             sent_msg = await chat.send_copy(update.effective_chat.id, update.message.id, **params)    
-        msg_map = MessageMap(group_chat_message_id=update.message.id, user_chat_message_id=sent_msg.message_id)
+        msg_map = MessageMap(group_chat_message_id=update.message.id, user_chat_message_id=sent_msg.message_id, user_id=user_id)
         db.add(msg_map)
         db.commit()
 
     except Exception as e:
         await update.message.reply_html(f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢")
 
+async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != admin_user_id:
+        await update.message.reply_html("你没有权限执行此操作。")
+        return
+    await context.bot.delete_forum_topic(update.effective_chat.id, update.message.message_thread_id)
+    if not is_delete_user_messages : return 
+    if target_user := db.query(User).filter(User.message_thread_id == update.message.message_thread_id).first():
+        all_messages_in_user_chat = db.query(MessageMap).filter(MessageMap.user_id == target_user.user_id).all()
+        await context.bot.delete_messages(target_user.user_id, [msg.user_chat_message_id for msg in all_messages_in_user_chat])
 
 async def error_in_send_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html("错误的消息类型。退出发送媒体组。后续对话将直接转发。")
@@ -249,8 +246,7 @@ if __name__ == '__main__':
   
     application.add_handler(MessageHandler(~filters.COMMAND & filters.ChatType.PRIVATE, forwarding_message_u2a))
     application.add_handler(MessageHandler(~filters.COMMAND & filters.Chat([admin_group_id]), forwarding_message_a2u))
-
-    # application.job_queue.run_repeating(monitor_delete_topic_event, interval=5, first=0)
+    application.add_handler(CommandHandler('clear', clear, filters.Chat([admin_group_id])))
 
     application.add_error_handler(error_handler)
     application.run_polling()  

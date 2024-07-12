@@ -24,7 +24,8 @@ class MessageMap(Base):
     __tablename__ = "message_map"
     id = Column(Integer, primary_key=True, index=True)
     user_chat_message_id = Column(Integer)
-    group_chat_message_id = Column(Integer)    
+    group_chat_message_id = Column(Integer)  
+    user_id = Column(Integer)
 
 class User(Base):
     __tablename__ = "user"
