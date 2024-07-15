@@ -52,8 +52,10 @@ Telegram的开源双向机器人。避免垃圾信息；让被限制的客户可
 打开`.env_example`，将自己机器人的Token、账号的API_ID/HASH、管理群组ID和管理员ID补全。
 另存`.env_example`为`.env`
 
-### 2. 构建python venv
+### 2. 获取代码/构建python venv
 ```
+git clone https://github.com/MiHaKun/Telegram-interactive-bot.git
+cd Telegram-interactive-bot
 python3 -m venv venv
 . venv/bin/activate
 pip install -r requirements.txt
