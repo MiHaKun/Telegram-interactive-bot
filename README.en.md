@@ -28,11 +28,11 @@ An open-source bidirectional bot for Telegram. It helps to avoid spam messages a
 The main principle of this bot is to forward the conversation between the client and the bot to a group (preferably a private group) and categorize each client's messages into a sub-category. Therefore, before starting, you need to:
 1. Find @BotFather and apply for a bot.
 2. Obtain the bot's token.
-3. Get API_ID/API_HASH.
-4. Create a group (set as public as needed).
-5. Enable "Topics" in the group.
-6. Add your bot to the group and promote it to an administrator.
-7. Remember to include "Message Management" and "Topic Management" in the administrative permissions.
+3. Create a group (set as public as needed).
+4. Enable "Topics" in the group.
+5. Add your bot to the group and promote it to an administrator.
+6. Remember to include "Message Management" and "Topic Management" in the administrative permissions.
+7. Use the bot @GetTheirIDBot to obtain the built-in ID of the group and the user ID of the administrator.
 8. Use the bot @GetTheirIDBot to get the built-in ID and administrator user ID of the group.
 
    ![image-20240703082929589](./doc/en/image-20240703083738158.png)![image-20240703083040852](./doc/en/image-20240703083634098.png)
