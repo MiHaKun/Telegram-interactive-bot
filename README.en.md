@@ -59,7 +59,7 @@ python -m interactive-bot
 # ToDoList
 - [x] Support message reply functionality. Messages can reference each other.
 - [x] Improve the database.
-- [ ] Add client's human-machine recognition to prevent bored individuals from using userbots to spam.
+- [x] Add client's human-machine recognition to prevent bored individuals from using userbots to spam.
 - [x] Add and recognize media group messages.
 - [x] Streamline the code, use payload to expand forwarding parameters.
 
