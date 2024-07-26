@@ -69,7 +69,7 @@ python -m interactive-bot
 # ToDoList
 - [x] 支持消息回复功能。消息间可以相互引用。
 - [x] 完善下数据库。
-- [ ] 添加客户的人机识别，防止无聊的人用userbot来刷
+- [x] 添加客户的人机识别，防止无聊的人用userbot来刷
 - [x] 添加并识别媒体组消息。
 - [x] 精简点代码，利用**payload来展开forwarding的参数。
 
