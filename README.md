@@ -67,6 +67,7 @@ python -m interactive-bot
 
 
 # ToDoList
+- [ ] 准备完善下，docker化
 - [x] 支持消息回复功能。消息间可以相互引用。
 - [x] 完善下数据库。
 - [x] 添加客户的人机识别，防止无聊的人用userbot来刷
