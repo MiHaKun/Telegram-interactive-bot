@@ -84,3 +84,7 @@ python -m interactive-bot
 - 服务器推荐RackNerd的。实际上，我也确实用这个。够便宜。这款就够：[2核3G--年27刀](https://my.racknerd.com/aff.php?aff=11705&pid=828) 
 - 实在搞不定部署，可以群里找大家帮忙部署下。服务器也可以找大家共用： https://t.me/DeveloperTeamGroup 
 - 实在实在实在搞不定部署，找  [@MrMiHa](https://t.me/MrMiHa)  同学付费部署……
+
+# 详细部署文档
+
+[米哈同学的知识库](https://miha.uk/docs/tutor/telegram-interactive-bot/)
