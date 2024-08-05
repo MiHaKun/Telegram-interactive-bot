@@ -7,5 +7,5 @@ RUN pip install -r /tmp/requirements.txt
 WORKDIR /app
 
 
-CMD ["python", "main.py"]
+CMD ["python", "-m", "interactive-bot"]
 

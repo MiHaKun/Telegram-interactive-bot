@@ -58,16 +58,22 @@ python3 -m venv venv
 . venv/bin/activate
 pip install -r requirements.txt
 ```
-### 3. 执行启动
+### 3. 执行
+
+#### 3.1 普通执行
 ```
 python -m interactive-bot
 ```
 
 **PS:** 正式运营，还是需要类似`PM2`、`supervisor`之类的进程管理工具，配合看门狗来实现不间断运行、自动重启、失效重启等功能。 
 
+#### 3.2 docker 执行
+1. 安装docker ， 参看 [Install Docker under Ubuntu 22.04](https://gist.github.com/dehsilvadeveloper/c3bdf0f4cdcc5c177e2fe9be671820c7)
+2. 执行`docker build -t tgibot .` 生成一个tgibot的镜像
+3. 执行`docker run --restart always --name telegram-interactive-bot  -v "$PWD":/app tgibot:latest` 生成容器并执行。
 
 # ToDoList
-- [ ] 准备完善下，docker化
+- [x] 准备完善下，docker化
 - [x] 支持消息回复功能。消息间可以相互引用。
 - [x] 完善下数据库。
 - [x] 添加客户的人机识别，防止无聊的人用userbot来刷
