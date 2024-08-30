@@ -32,6 +32,7 @@ from . import (
     is_delete_user_messages,
     logger,
     welcome_message,
+    disable_captcha,
 )
 from .utils import delete_message_later
 
@@ -242,8 +243,9 @@ async def callback_query_vcode(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await check_human(update, context):
-        return
+    if not disable_captcha:
+        if not await check_human(update, context):
+            return
     user = update.effective_user
     update_user_db(user)
     chat_id = admin_group_id
