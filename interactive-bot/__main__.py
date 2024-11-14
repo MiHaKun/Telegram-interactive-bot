@@ -33,6 +33,7 @@ from . import (
     logger,
     welcome_message,
     disable_captcha,
+    message_interval,
 )
 from .utils import delete_message_later
 
@@ -246,6 +247,11 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
     if not disable_captcha:
         if not await check_human(update, context):
             return
+    if message_interval:
+        if context.user_data["last_message_time"] > time.time() - message_interval:
+            await update.message.reply_html("请不要频繁发送消息。")
+            return
+        context.user_data["last_message_time"] = time.time()
     user = update.effective_user
     update_user_db(user)
     chat_id = admin_group_id
