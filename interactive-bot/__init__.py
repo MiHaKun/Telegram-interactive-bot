@@ -31,6 +31,6 @@ except ValueError:
 
 
 is_delete_topic_as_ban_forever = os.getenv("DELETE_TOPIC_AS_FOREVER_BAN") == "TRUE"
-is_delete_user_messages = int(os.getenv("DELETE_USER_MESSAGE_ON_CLEAR_CMD", 0))
+is_delete_user_messages = os.getenv("DELETE_USER_MESSAGE_ON_CLEAR_CMD") == "TRUE"
 disable_captcha = os.getenv("DISABLE_CAPTCHA") == "TRUE"
 message_interval = int(os.getenv("MESSAGE_INTERVAL", 5))
