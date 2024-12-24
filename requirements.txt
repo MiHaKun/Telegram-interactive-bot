@@ -27,3 +27,4 @@ tornado==6.4.1
 typing_extensions==4.12.2
 tzdata==2024.1
 tzlocal==5.2
+python-dotenv==1.0.1
