@@ -172,7 +172,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"admin group error {e}")
             await update.message.reply_html(
-                f"⚠️⚠️后台管理群组设置错误，请检查配置。⚠️⚠️\n你需要确保已经将机器人 @{context.bot.username} 邀请入管理群组并且给与了管理员权限。\n错误细节：{e}\n请联系 @MrMiHa 获取技术支持。"
+                f"⚠️⚠️后台管理群组设置错误，请检查配置。⚠️⚠️\n你需要确保已经将机器人 @{context.bot.username} 邀请入管理群组并且给与了管理员权限。\n错误细节：{e}\n"
             )
             return ConversationHandler.END
         await update.message.reply_html(
@@ -346,7 +346,7 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
             )
     except Exception as e:
         await update.message.reply_html(
-            f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢"
+            f"发送失败: {e}\n"
         )
 
 
@@ -456,7 +456,7 @@ async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_T
 
     except Exception as e:
         await update.message.reply_html(
-            f"发送失败: {e}\n请联系 @MrMiHa 汇报这个错误。谢谢"
+            f"发送失败: {e}\n"
         )
 
 
