@@ -1,14 +1,10 @@
-# --- START OF FILE __main__.py ---
-
 import os
 import random
 import time
 from datetime import datetime, timedelta
 from string import ascii_letters as letters
-# +++ Add necessary imports +++
 import asyncio # Already present, but needed for broadcast delay
 from telegram.constants import ChatType, UpdateType
-# +++ End Add necessary imports +++
 
 import httpx
 import telegram
@@ -497,7 +493,6 @@ async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_T
             f"发送失败: {e}\n"
         )
 
-# +++ Start Add Edit Handler Functions +++
 async def handle_edited_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles edited messages from the user's private chat."""
     if not update.edited_message: return
@@ -555,7 +550,6 @@ async def handle_edited_admin_message(update: Update, context: ContextTypes.DEFA
             logger.warning(f"Failed sync admin edit {edited_msg_id} -> {user_chat_msg_id}: {e}")
     except Exception as e:
         logger.error(f"Error syncing admin edit {edited_msg_id} -> {user_chat_msg_id}: {e}")
-# +++ End Add Edit Handler Functions +++
 
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -585,10 +579,6 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error deleting topic {message_thread_id} in clear: {e}")
 
     if is_delete_user_messages:
-        # Re-fetch user associated with the thread ID *before* potential clearing above
-        # This might be tricky if the clear already removed the association.
-        # A better approach might be needed if strict topic-message deletion is required.
-        # Sticking to original implied logic: find user based on thread ID at time of command.
         target_user = db.query(User).filter(User.message_thread_id == message_thread_id).first() # Might be None now
         if not target_user:
              # Try finding user based on who the topic *was* for if possible? No easy way in original structure.
@@ -604,11 +594,8 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.delete_messages(
                         target_user.user_id,
-                        ids_to_delete[:100], # Delete only up to 100 as per original simple call
+                        ids_to_delete[:100], 
                     )
-                    # Original didn't explicitly clean map after deletion attempt
-                    # db.query(MessageMap).filter(MessageMap.user_id == target_user.user_id).delete()
-                    # db.commit()
                 except Exception as e:
                     logger.error(f"Error deleting messages for user {target_user.user_id}: {e}")
 
@@ -695,14 +682,12 @@ if __name__ == "__main__":
 
     application.add_handler(
         MessageHandler(
-            # Add ~filters.UpdateType.EDITED_MESSAGE
             filters.ChatType.PRIVATE & ~filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE,
             forwarding_message_u2a
         )
     )
     application.add_handler(
         MessageHandler(
-            # Add ~filters.UpdateType.EDITED_MESSAGE and filters.IS_TOPIC_MESSAGE
             filters.Chat(admin_group_id) & filters.IS_TOPIC_MESSAGE & ~filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE,
             forwarding_message_a2u
         )
