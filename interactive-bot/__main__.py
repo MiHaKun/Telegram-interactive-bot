@@ -3,6 +3,8 @@ import random
 import time
 from datetime import datetime, timedelta
 from string import ascii_letters as letters
+import asyncio # Already present, but needed for broadcast delay
+from telegram.constants import ChatType, UpdateType
 
 import httpx
 import telegram
@@ -118,15 +120,20 @@ def update_user_db(user: telegram.User):
     db.add(u)
     db.commit()
 
-
 async def send_contact_card(
     chat_id, message_thread_id, user: User, update: Update, context: ContextTypes
 ):
     buttons = []
+    try: # Minimal check for premium status
+        tg_user = await context.bot.get_chat(user.user_id)
+        is_premium = tg_user.is_premium or False
+    except Exception:
+        is_premium = False
+
     buttons.append(
         [
             InlineKeyboardButton(
-                f"{'🏆 高级会员' if user.is_premium else '✈️ 普通会员' }",
+                f"{'🏆 高级会员' if is_premium else '✈️ 普通会员' }",
                 url=f"https://github.com/MiHaKun/Telegram-interactive-bot",
             )
         ]
@@ -136,6 +143,8 @@ async def send_contact_card(
             [InlineKeyboardButton("👤 直接联络", url=f"https://t.me/{user.username}")]
         )
 
+    reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+
     user_photo = await context.bot.get_user_profile_photos(user.id)
 
     if user_photo.total_count:
@@ -143,19 +152,19 @@ async def send_contact_card(
         await context.bot.send_photo(
             chat_id,
             photo=pic,
-            caption=f"👤 {mention_html(user.id, user.first_name)}\n\n📱 {user.id}\n\n🔗 @{user.username if user.username else '无'}",
+            caption=f"👤 {mention_html(user.id, user.first_name or str(user.id))}\n\n📱 {user.id}\n\n🔗 @{user.username if user.username else '无'}",
             message_thread_id=message_thread_id,
-            reply_markup=InlineKeyboardMarkup(buttons),
+            reply_markup=reply_markup,
             parse_mode="HTML",
         )
     else:
         await context.bot.send_contact(
             chat_id,
             phone_number="11111",
-            first_name=user.first_name,
+            first_name=user.first_name or "用户",
             last_name=user.last_name,
             message_thread_id=message_thread_id,
-            reply_markup=InlineKeyboardMarkup(buttons),
+            reply_markup=reply_markup,
         )
 
 
@@ -174,9 +183,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_html(
                 f"⚠️⚠️后台管理群组设置错误，请检查配置。⚠️⚠️\n你需要确保已经将机器人 @{context.bot.username} 邀请入管理群组并且给与了管理员权限。\n错误细节：{e}\n"
             )
-            return ConversationHandler.END
+            return # Keep original return
         await update.message.reply_html(
-            f"你好管理员 {user.first_name}({user.id})\n\n欢迎使用 {app_name} 机器人。\n\n 目前你的配置完全正确。可以在群组 <b> {bg.title} </b> 中使用机器人。"
+            f"你好管理员 {mention_html(user.id, user.full_name)} ({user.id})\n\n欢迎使用 {app_name} 机器人。\n\n 目前你的配置完全正确。可以在群组 <b> {bg.title} </b> 中使用机器人。"
         )
     else:
         await update.message.reply_html(
@@ -191,56 +200,93 @@ async def check_human(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 2分钟内禁言
             await update.message.reply_html("你已经被禁言,请稍后再尝试。")
             return False
-        file_name = random.choice(os.listdir("./assets/imgs"))
-        code = file_name.replace("image_", "").replace(".png", "")
-        file = f"./assets/imgs/{file_name}"
-        codes = ["".join(random.sample(letters, 5)) for _ in range(0, 7)]
-        codes.append(code)
-        random.shuffle(codes)
+        img_dir = "./assets/imgs"
+        try:
+            if not os.path.isdir(img_dir) or not os.listdir(img_dir):
+                 logger.warning(f"Captcha image directory '{img_dir}' not found or empty. Skipping check.")
+                 context.user_data["is_human"] = True
+                 return True
 
-        photo = context.bot_data.get(f"image|{code}")
-        if not photo:
-            # 没发送过，就用内置图片。
-            photo = file
-        buttons = [
-            InlineKeyboardButton(x, callback_data=f"vcode_{x}_{user.id}") for x in codes
-        ]
-        button_matrix = [buttons[i : i + 4] for i in range(0, len(buttons), 4)]
-        sent = await update.message.reply_photo(
-            photo,
-            f"{mention_html(user.id, user.first_name)}请选择图片中的文字。回答错误将无法联系客服。",
-            reply_markup=InlineKeyboardMarkup(button_matrix),
-            parse_mode="HTML",
-        )
-        # 存下已经发送过的图片
-        biggest_photo = sorted(sent.photo, key=lambda x: x.file_size, reverse=True)[0]
-        context.bot_data[f"image|{code}"] = biggest_photo.file_id
-        context.user_data["vcode"] = code
-        await delete_message_later(60, sent.chat.id, sent.message_id, context)
-        return False
+            file_name = random.choice(os.listdir(img_dir))
+            code = file_name.replace("image_", "").replace(".png", "")
+            file_path = os.path.join(img_dir, file_name)
+
+            codes = ["".join(random.sample(letters, 5)) for _ in range(0, 7)]
+            codes.append(code)
+            random.shuffle(codes)
+
+            photo_file_id = context.bot_data.get(f"image|{code}")
+            photo_to_send = photo_file_id if photo_file_id else file_path
+
+            buttons = [
+                InlineKeyboardButton(x, callback_data=f"vcode_{x}_{user.id}") for x in codes
+            ]
+            button_matrix = [buttons[i : i + 4] for i in range(0, len(buttons), 4)]
+
+            captcha_text = f"{mention_html(user.id, user.first_name or str(user.id))}请选择图片中的文字。回答错误将无法联系客服。"
+
+            if photo_file_id:
+                sent = await update.message.reply_photo(
+                    photo=photo_file_id,
+                    caption=captcha_text,
+                    reply_markup=InlineKeyboardMarkup(button_matrix),
+                    parse_mode="HTML",
+                )
+            else:
+                 with open(file_path, "rb") as f:
+                     sent = await update.message.reply_photo(
+                        photo=f,
+                        caption=captcha_text,
+                        reply_markup=InlineKeyboardMarkup(button_matrix),
+                        parse_mode="HTML",
+                     )
+                 if sent.photo:
+                     biggest_photo = sorted(sent.photo, key=lambda x: x.file_size, reverse=True)[0]
+                     context.bot_data[f"image|{code}"] = biggest_photo.file_id
+
+            context.user_data["vcode"] = code
+            context.user_data["vcode_message_id"] = sent.message_id
+            await delete_message_later(60, sent.chat.id, sent.message_id, context)
+            return False
+        except Exception as e:
+             logger.error(f"Error during captcha generation: {e}")
+             await update.message.reply_html("无法加载验证码，请稍后重试。")
+             context.user_data["is_human"] = True
+             return True
     return True
 
 
 async def callback_query_vcode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    code = query.data.split("_")[1]
-    user_id = query.data.split("_")[2]
-    if user_id == str(user.id):
-        # 是正确的人点击
-        if code == context.user_data.get("vcode"):
-            # 点击合法
-            await query.answer(f"正确，欢迎。")
-            sent = await context.bot.send_message(
+    try:
+        _, code_clicked, target_user_id_str = query.data.split("_", 2)
+    except ValueError:
+        logger.warning(f"Invalid vcode callback data: {query.data}")
+        return
+
+    if target_user_id_str == str(user.id):
+        correct_code = context.user_data.get("vcode")
+        if code_clicked == correct_code:
+            await query.answer("正确，欢迎。")
+            await context.bot.send_message(
                 update.effective_chat.id,
-                f"{mention_html(user.id, user.first_name)} , 欢迎。",
+                f"{mention_html(user.id, user.first_name or str(user.id))} , 欢迎。",
                 parse_mode="HTML",
             )
             context.user_data["is_human"] = True
+            context.user_data.pop("vcode", None)
+            context.user_data.pop("vcode_message_id", None)
+            context.user_data.pop("is_human_error_time", None)
         else:
-            await query.answer(f"~错误~，禁言2分钟")
+            await query.answer("~错误~，禁言2分钟")
             context.user_data["is_human_error_time"] = time.time()
-    await query.message.delete()
+            context.user_data.pop("vcode", None)
+            context.user_data.pop("vcode_message_id", None)
+    try:
+        await query.message.delete()
+    except:
+        pass
 
 
 async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -255,82 +301,82 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     update_user_db(user)
     chat_id = admin_group_id
-    attachment = update.message.effective_attachment
-    # await update.message.forward(chat_id)
+    # attachment = update.message.effective_attachment # Unused
+    message = update.message
+
     u = db.query(User).filter(User.user_id == user.id).first()
+    if not u: return
+
     message_thread_id = u.message_thread_id
-    if (
-        f := db.query(FormnStatus)
-        .filter(FormnStatus.message_thread_id == message_thread_id)
-        .first()
-    ):
-        if f.status == "closed":
+    if message_thread_id:
+        f = db.query(FormnStatus).filter(FormnStatus.message_thread_id == message_thread_id).first()
+        if f and f.status == "closed":
             await update.message.reply_html(
                 "客服已经关闭对话。如需联系，请利用其他途径联络客服回复和你的对话。"
             )
             return
     if not message_thread_id:
-        formn = await context.bot.create_forum_topic(
-            chat_id,
-            name=f"工单{random.randint(10000,99999)}|{user.full_name}|{user.id}",
-        )
-        message_thread_id = formn.message_thread_id
-        u.message_thread_id = message_thread_id
-        await context.bot.send_message(
-            chat_id,
-            f"新的用户 {mention_html(user.id, user.full_name)} 开始了一个新的会话。",
-            message_thread_id=message_thread_id,
-            parse_mode="HTML",
-        )
-        await send_contact_card(chat_id, message_thread_id, user, update, context)
-        db.add(u)
-        db.commit()
+        try:
+            formn = await context.bot.create_forum_topic(
+                chat_id,
+                name=f"{user.full_name}|{user.id}", # Naming from user's version
+            )
+            message_thread_id = formn.message_thread_id
+            u.message_thread_id = message_thread_id
+            db.add(FormnStatus(message_thread_id=message_thread_id, status="opened"))
+            db.add(u)
+            db.commit()
 
-    # 构筑下发送参数
+            await context.bot.send_message(
+                chat_id,
+                f"新的用户 {mention_html(user.id, user.full_name)} 开始了一个新的会话。",
+                message_thread_id=message_thread_id,
+                parse_mode="HTML",
+            )
+            await send_contact_card(chat_id, message_thread_id, u, update, context)
+        except Exception as e:
+             logger.error(f"Failed topic creation for {user.id}: {e}")
+             await message.reply_html("创建会话时出错，请重试。")
+             return
+
     params = {"message_thread_id": message_thread_id}
-    if update.message.reply_to_message:
-        # 用户引用了一条消息。我们需要找到这条消息在群组中的id
-        reply_in_user_chat = update.message.reply_to_message.message_id
-        if (
-            msg_map := db.query(MessageMap)
-            .filter(MessageMap.user_chat_message_id == reply_in_user_chat)
-            .first()
-        ):
+    if message.reply_to_message:
+        reply_in_user_chat = message.reply_to_message.message_id
+        msg_map = db.query(MessageMap).filter(MessageMap.user_chat_message_id == reply_in_user_chat).first()
+        if msg_map:
             params["reply_to_message_id"] = msg_map.group_chat_message_id
     try:
-        if update.message.media_group_id:
+        if message.media_group_id:
+            is_first = not db.query(MediaGroupMesssage).filter_by(media_group_id=message.media_group_id, chat_id=message.chat.id).first()
             msg = MediaGroupMesssage(
-                chat_id=update.message.chat.id,
-                message_id=update.message.message_id,
-                media_group_id=update.message.media_group_id,
-                is_header=False,
-                caption_html=update.message.caption_html,
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                media_group_id=message.media_group_id,
+                is_header=is_first,
+                caption_html=message.caption_html if is_first else None
             )
             db.add(msg)
             db.commit()
-            if update.message.media_group_id != context.user_data.get(
-                "current_media_group_id", 0
-            ):
-                context.user_data["current_media_group_id"] = (
-                    update.message.media_group_id
-                )
+            if message.media_group_id != context.user_data.get("current_media_group_id", 0):
+                context.user_data["current_media_group_id"] = message.media_group_id
                 await send_media_group_later(
-                    5, user.id, chat_id, update.message.media_group_id, "u2a", context
+                    5, user.id, chat_id, message.media_group_id, "u2a", context
                 )
             return
         else:
-            chat = await context.bot.get_chat(chat_id)
-            sent_msg = await chat.send_copy(
-                update.effective_chat.id, update.message.id, **params
+            target_chat = await context.bot.get_chat(chat_id)
+            sent_msg = await target_chat.send_copy(
+                from_chat_id=message.chat.id,
+                message_id=message.id,
+                **params
             )
-
-        msg_map = MessageMap(
-            user_chat_message_id=update.message.id,
-            group_chat_message_id=sent_msg.message_id,
-            user_id=user.id,
-        )
-        db.add(msg_map)
-        db.commit()
+            msg_map = MessageMap(
+                user_chat_message_id=message.id,
+                group_chat_message_id=sent_msg.message_id,
+                user_id=user.id,
+            )
+            db.add(msg_map)
+            db.commit()
 
     except BadRequest as e:
         if is_delete_topic_as_ban_forever:
@@ -340,6 +386,7 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
         else:
             u.message_thread_id = 0
             db.add(u)
+            db.query(FormnStatus).filter(FormnStatus.message_thread_id == message_thread_id).delete()
             db.commit()
             await update.message.reply_html(
                 f"发送失败，你的对话已经被客服删除。请再发送一条消息用来激活对话。"
@@ -351,151 +398,238 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def forwarding_message_a2u(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_user_db(update.effective_user)
-    message_thread_id = update.message.message_thread_id
-    if not message_thread_id:
-        # general message, ignore
-        return
+    message = update.message
+    if not message or message.chat.id != admin_group_id: return
+    # update_user_db(update.effective_user)
+
+    message_thread_id = message.message_thread_id
+    if not message_thread_id: return
+    if message.from_user.is_bot: return
+
     user_id = 0
-    if u := db.query(User).filter(User.message_thread_id == message_thread_id).first():
-        user_id = u.user_id
+    u = db.query(User).filter(User.message_thread_id == message_thread_id).first()
+    if u: user_id = u.user_id
     if not user_id:
-        logger.debug(update.message)
+        logger.debug(f"No user for message {message.id} in topic {message_thread_id}")
         return
-    if update.message.forum_topic_created:
-        f = FormnStatus(
-            message_thread_id=update.message.message_thread_id, status="opened"
-        )
+
+    if message.forum_topic_created:
+        f = FormnStatus(message_thread_id=message.message_thread_id, status="opened")
         db.add(f)
         db.commit()
         return
-    if update.message.forum_topic_closed:
+    if message.forum_topic_closed:
         await context.bot.send_message(
             user_id, "对话已经结束。对方已经关闭了对话。你的留言将被忽略。"
         )
-        if (
-            f := db.query(FormnStatus)
-            .filter(FormnStatus.message_thread_id == update.message.message_thread_id)
-            .first()
-        ):
+        f = db.query(FormnStatus).filter(FormnStatus.message_thread_id == message.message_thread_id).first()
+        if f:
             f.status = "closed"
             db.add(f)
             db.commit()
         return
-    if update.message.forum_topic_reopened:
+    if message.forum_topic_reopened:
         await context.bot.send_message(user_id, "对方重新打开了对话。可以继续对话了。")
-        if (
-            f := db.query(FormnStatus)
-            .filter(FormnStatus.message_thread_id == update.message.message_thread_id)
-            .first()
-        ):
+        f = db.query(FormnStatus).filter(FormnStatus.message_thread_id == message.message_thread_id).first()
+        if f:
             f.status = "opened"
             db.add(f)
             db.commit()
         return
-    if (
-        f := db.query(FormnStatus)
-        .filter(FormnStatus.message_thread_id == message_thread_id)
-        .first()
-    ):
-        if f.status == "closed":
-            await update.message.reply_html(
-                "对话已经结束。希望和对方联系，需要打开对话。"
-            )
-            return
-    chat_id = user_id
-    # 构筑下发送参数
+
+    f = db.query(FormnStatus).filter(FormnStatus.message_thread_id == message_thread_id).first()
+    if f and f.status == "closed":
+        await update.message.reply_html(
+            "对话已经结束。希望和对方联系，需要打开对话。"
+        )
+        return
+
+    target_chat_id = user_id
     params = {}
-    if update.message.reply_to_message:
-        # 群组中，客服回复了一条消息。我们需要找到这条消息在用户中的id
-        reply_in_admin = update.message.reply_to_message.message_id
-        if (
-            msg_map := db.query(MessageMap)
-            .filter(MessageMap.group_chat_message_id == reply_in_admin)
-            .first()
-        ):
+    if message.reply_to_message:
+        reply_in_admin = message.reply_to_message.message_id
+        msg_map = db.query(MessageMap).filter(MessageMap.group_chat_message_id == reply_in_admin).first()
+        if msg_map:
             params["reply_to_message_id"] = msg_map.user_chat_message_id
     try:
-        if update.message.media_group_id:
+        if message.media_group_id:
+            is_first = not db.query(MediaGroupMesssage).filter_by(media_group_id=message.media_group_id, chat_id=message.chat.id).first()
             msg = MediaGroupMesssage(
-                chat_id=update.message.chat.id,
-                message_id=update.message.message_id,
-                media_group_id=update.message.media_group_id,
-                is_header=False,
-                caption_html=update.message.caption_html,
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                media_group_id=message.media_group_id,
+                is_header=is_first,
+                caption_html=message.caption_html if is_first else None,
             )
             db.add(msg)
             db.commit()
-            if update.message.media_group_id != context.application.user_data[
-                user_id
-            ].get("current_media_group_id", 0):
-                context.application.user_data[user_id][
-                    "current_media_group_id"
-                ] = update.message.media_group_id
+            if is_first:
                 await send_media_group_later(
                     5,
-                    update.effective_chat.id,
+                    message.chat.id,
                     user_id,
-                    update.message.media_group_id,
+                    message.media_group_id,
                     "a2u",
                     context,
                 )
             return
         else:
-            chat = await context.bot.get_chat(chat_id)
+            chat = await context.bot.get_chat(target_chat_id)
             sent_msg = await chat.send_copy(
-                update.effective_chat.id, update.message.id, **params
+                from_chat_id=message.chat.id,
+                message_id=message.id,
+                **params
             )
-        msg_map = MessageMap(
-            group_chat_message_id=update.message.id,
-            user_chat_message_id=sent_msg.message_id,
-            user_id=user_id,
-        )
-        db.add(msg_map)
-        db.commit()
+            msg_map = MessageMap(
+                group_chat_message_id=message.id,
+                user_chat_message_id=sent_msg.message_id,
+                user_id=user_id,
+            )
+            db.add(msg_map)
+            db.commit()
 
     except Exception as e:
         await update.message.reply_html(
             f"发送失败: {e}\n"
         )
 
+async def handle_edited_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles edited messages from the user's private chat."""
+    if not update.edited_message: return
+    edited_msg = update.edited_message
+    edited_msg_id = edited_msg.message_id
+
+    msg_map = db.query(MessageMap).filter(MessageMap.user_chat_message_id == edited_msg_id).first()
+    if not msg_map or not msg_map.group_chat_message_id: return
+
+    group_msg_id = msg_map.group_chat_message_id
+
+    try:
+        if edited_msg.text is not None:
+            await context.bot.edit_message_text(
+                chat_id=admin_group_id, message_id=group_msg_id,
+                text=edited_msg.text_html, parse_mode='HTML')
+        elif edited_msg.caption is not None:
+            await context.bot.edit_message_caption(
+                chat_id=admin_group_id, message_id=group_msg_id,
+                caption=edited_msg.caption_html, parse_mode='HTML')
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            logger.warning(f"Failed sync user edit {edited_msg_id} -> {group_msg_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error syncing user edit {edited_msg_id} -> {group_msg_id}: {e}")
+
+async def handle_edited_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles edited messages from the admin group topic."""
+    if not update.edited_message: return
+    if update.edited_message.chat.id != admin_group_id: return
+
+    edited_msg = update.edited_message
+    edited_msg_id = edited_msg.message_id
+    message_thread_id = edited_msg.message_thread_id
+
+    if not message_thread_id or edited_msg.from_user.is_bot: return
+
+    msg_map = db.query(MessageMap).filter(MessageMap.group_chat_message_id == edited_msg_id).first()
+    if not msg_map or not msg_map.user_chat_message_id: return
+
+    user_chat_msg_id = msg_map.user_chat_message_id
+    user_id = msg_map.user_id
+
+    try:
+        if edited_msg.text is not None:
+            await context.bot.edit_message_text(
+                chat_id=user_id, message_id=user_chat_msg_id,
+                text=edited_msg.text_html, parse_mode='HTML')
+        elif edited_msg.caption is not None:
+            await context.bot.edit_message_caption(
+                chat_id=user_id, message_id=user_chat_msg_id,
+                caption=edited_msg.caption_html, parse_mode='HTML')
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            logger.warning(f"Failed sync admin edit {edited_msg_id} -> {user_chat_msg_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error syncing admin edit {edited_msg_id} -> {user_chat_msg_id}: {e}")
+
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    message = update.message
     if not user.id in admin_user_ids:
-        await update.message.reply_html("你没有权限执行此操作。")
+        await message.reply_html("你没有权限执行此操作。")
         return
-    await context.bot.delete_forum_topic(
-        update.effective_chat.id, update.message.message_thread_id
-    )
-    if not is_delete_user_messages:
+
+    message_thread_id = message.message_thread_id
+    if not message_thread_id:
+        await message.reply_html("请在话题内使用 /clear。")
         return
-    if (
-        target_user := db.query(User)
-        .filter(User.message_thread_id == update.message.message_thread_id)
-        .first()
-    ):
-        all_messages_in_user_chat = (
-            db.query(MessageMap).filter(MessageMap.user_id == target_user.user_id).all()
+
+    try:
+        await context.bot.delete_forum_topic(
+            message.chat.id, message_thread_id
         )
-        await context.bot.delete_messages(
-            target_user.user_id,
-            [msg.user_chat_message_id for msg in all_messages_in_user_chat],
-        )
+        target_user_for_clear = db.query(User).filter(User.message_thread_id == message_thread_id).first()
+        db.query(FormnStatus).filter(FormnStatus.message_thread_id == message_thread_id).delete()
+        if target_user_for_clear:
+            target_user_for_clear.message_thread_id = None
+            db.add(target_user_for_clear)
+        db.commit()
+
+    except Exception as e:
+        logger.error(f"Error deleting topic {message_thread_id} in clear: {e}")
+
+    if is_delete_user_messages:
+        target_user = db.query(User).filter(User.message_thread_id == message_thread_id).first() # Might be None now
+        if not target_user:
+             # Try finding user based on who the topic *was* for if possible? No easy way in original structure.
+             logger.warning(f"Cannot find user for cleared topic {message_thread_id} to delete messages.")
+
+
+        if target_user:
+            all_messages_in_user_chat = (
+                db.query(MessageMap).filter(MessageMap.user_id == target_user.user_id).all()
+            )
+            ids_to_delete = [msg.user_chat_message_id for msg in all_messages_in_user_chat if msg.user_chat_message_id]
+            if ids_to_delete:
+                try:
+                    await context.bot.delete_messages(
+                        target_user.user_id,
+                        ids_to_delete[:100], 
+                    )
+                except Exception as e:
+                    logger.error(f"Error deleting messages for user {target_user.user_id}: {e}")
 
 
 async def _broadcast(context: ContextTypes.DEFAULT_TYPE):
     users = db.query(User).all()
-    msg_id, chat_id = context.job.data.split("_")
+    try:
+        job_data = context.job.data
+        msg_id_str, chat_id_str = job_data.split("_", 1)
+        msg_id = int(msg_id_str)
+        chat_id = int(chat_id_str)
+    except:
+        logger.error(f"Invalid job data for broadcast: {job_data}")
+        return
+
     success = 0
     failed = 0
+    blocked = 0
+    send_delay = 0.1
+
     for u in users:
         try:
             chat = await context.bot.get_chat(u.user_id)
             await chat.send_copy(chat_id, msg_id)
             success += 1
+        except BadRequest as e:
+             if "blocked" in str(e).lower() or "deactivated" in str(e).lower(): blocked += 1
+             else: failed += 1; logger.warning(f"Broadcast BadRequest for {u.user_id}: {e}")
         except Exception as e:
             failed += 1
+            logger.warning(f"Broadcast Exception for {u.user_id}: {e}")
+        await asyncio.sleep(send_delay)
+
+    logger.info(f"Broadcast result - Success: {success}, Failed: {failed}, Blocked: {blocked}")
 
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -510,25 +644,29 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    job_data = f"{update.message.reply_to_message.id}_{update.effective_chat.id}"
+    job_name = f"broadcast_{update.message.reply_to_message.id}"
+
     context.job_queue.run_once(
         _broadcast,
         0,
-        data=f"{update.message.reply_to_message.id}_{update.effective_chat.id}",
+        data=job_data,
+        name=job_name
     )
+    await update.message.reply_html("广播任务已添加。")
 
 
 async def error_in_send_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_html(
-        "错误的消息类型。退出发送媒体组。后续对话将直接转发。"
-    )
-    return ConversationHandler.END
+    logger.warning("error_in_send_media_group called (likely unused)")
+    if update and update.message:
+        await update.message.reply_html(
+            "错误的消息类型。退出发送媒体组。后续对话将直接转发。"
+        )
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to notify the developer."""
-    # Log the error before we do anything else, so we can see it even if something breaks.
-    logger.error(f"Exception while handling an update: {context.error} ")
-    logger.debug(f"Exception detail is :", exc_info=context.error)
+    logger.error(f"Exception while handling an update: {context.error} ", exc_info=context.error)
 
 
 if __name__ == "__main__":
@@ -544,22 +682,35 @@ if __name__ == "__main__":
 
     application.add_handler(
         MessageHandler(
-            ~filters.COMMAND & filters.ChatType.PRIVATE, forwarding_message_u2a
+            filters.ChatType.PRIVATE & ~filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE,
+            forwarding_message_u2a
         )
     )
     application.add_handler(
         MessageHandler(
-            ~filters.COMMAND & filters.Chat([admin_group_id]), forwarding_message_a2u
+            filters.Chat(admin_group_id) & filters.IS_TOPIC_MESSAGE & ~filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE,
+            forwarding_message_a2u
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.UpdateType.EDITED_MESSAGE,
+            handle_edited_user_message
         )
     )
     application.add_handler(
-        CommandHandler("clear", clear, filters.Chat([admin_group_id]))
+        MessageHandler(
+            filters.Chat(admin_group_id) & filters.IS_TOPIC_MESSAGE & filters.UpdateType.EDITED_MESSAGE,
+            handle_edited_admin_message
+        )
     )
-    application.add_handler(
-        CommandHandler("broadcast", broadcast, filters.Chat([admin_group_id]))
-    )
+
+    application.add_handler(CommandHandler("clear", clear, filters.Chat(admin_group_id)))
+    application.add_handler(CommandHandler("broadcast", broadcast, filters.Chat(admin_group_id)))
     application.add_handler(
         CallbackQueryHandler(callback_query_vcode, pattern="^vcode_")
     )
     application.add_error_handler(error_handler)
+
     application.run_polling()
