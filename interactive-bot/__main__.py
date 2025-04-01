@@ -272,7 +272,7 @@ async def forwarding_message_u2a(update: Update, context: ContextTypes.DEFAULT_T
     if not message_thread_id:
         formn = await context.bot.create_forum_topic(
             chat_id,
-            name=f"工单{random.randint(10000,99999)}|{user.full_name}|{user.id}",
+            name=f"{user.full_name}|{user.id}",
         )
         message_thread_id = formn.message_thread_id
         u.message_thread_id = message_thread_id
