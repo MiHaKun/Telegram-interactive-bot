@@ -1,5 +1,18 @@
 # Telegram interactive bot (Telegram Bidirectional Bot)
 
+## 0. Break, A friend of mine has developed a free platform of this kind of bot
+### Key Features of the Hosted Version
+
+- **Privacy-First Design** – Fully compliant with the Telegram API. Pure message forwarding only — no data is ever stored!
+- **Anti-Spam Protection** – Smart abuse prevention to keep both customers and support agents safe from spam and unwanted messages.
+- **Group Chat Integration** – Seamlessly forward chats to support groups for clear, organized message handling. Great for teams with multiple agents.
+- **Lightning-Fast Response** – Powered by AWS global infrastructure with millisecond-level latency and 99.98% uptime.
+- **Full Message Support** – Handles every type of Telegram message, no exceptions.
+- **Totally Free to Use** – Core two-way customer support features are 100% free for life!
+
+**Give it a try:** @FriesOfficialBot  
+https://t.me/FriesOfficialBot
+
 ## I. Introduction
 
 An open-source bidirectional bot for Telegram. It helps to avoid spam messages and allows restricted clients to contact you smoothly.
